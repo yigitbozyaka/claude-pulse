@@ -1,0 +1,9 @@
+{
+  "session_limit_output_tokens": 180000,
+  "weekly_all_limit_output_tokens": 1700000,
+  "weekly_sonnet_limit_output_tokens": 776000,
+  "weekly_reset_day": "Mon",
+  "weekly_reset_hour": 22,
+  "weekly_reset_minute": 0,
+  "refresh_interval_seconds": 60
+}
