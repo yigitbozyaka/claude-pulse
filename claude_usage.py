@@ -1,7 +1,8 @@
 """
-Claude Max Usage Monitor — Windows System Tray App
+Claude Usage Monitor — Windows System Tray App
 Fetches real usage from Anthropic OAuth API.
 Monochrome terracotta design with Claude brand palette.
+Auto-detects subscription tier (Pro, Max, etc.).
 """
 
 import json
@@ -58,6 +59,104 @@ MODEL_SHADES = {
     "other":  "#4a4740",   # faded
 }
 MODEL_DISPLAY = {"opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku", "other": "Other"}
+
+# ─── Subscription Detection ─────────────────────────────────────────
+
+PLAN_DISPLAY = {
+    "pro": "Pro", "max_5": "Max (5x)", "max_20": "Max (20x)",
+    "free": "Free", "team": "Team", "max": "Max",
+}
+PLAN_MODELS = {
+    "pro": ["Opus", "Haiku"],
+    "max_5": ["Opus", "Sonnet", "Haiku"],
+    "max_20": ["Opus", "Sonnet", "Haiku"],
+    "max": ["Opus", "Sonnet", "Haiku"],
+    "free": ["Haiku"],
+    "team": ["Opus", "Sonnet", "Haiku"],
+}
+
+_account_info_cache = {"fetched": False, "plan": None}
+
+
+def _normalize_plan(val):
+    """Normalize various plan name formats to a standard key."""
+    if not val: return None
+    v = str(val).lower().strip().replace("-", "_").replace(" ", "_")
+    if "max" in v and "20" in v: return "max_20"
+    if "max" in v and "5" in v: return "max_5"
+    if "max" in v: return "max"
+    if "pro" in v: return "pro"
+    if "free" in v: return "free"
+    if "team" in v: return "team"
+    return v
+
+
+def _find_plan_in_dict(d, depth=0):
+    """Recursively search a dict for plan/tier info, max 3 levels deep."""
+    if not isinstance(d, dict) or depth > 3:
+        return None
+    for key in ("membershipTier", "membership_tier", "tier", "plan",
+                "plan_type", "subscription_type"):
+        val = d.get(key)
+        if val and isinstance(val, str):
+            return _normalize_plan(val)
+    for key, val in d.items():
+        if isinstance(val, dict):
+            result = _find_plan_in_dict(val, depth + 1)
+            if result:
+                return result
+    return None
+
+
+def _try_fetch_account_info(token):
+    """Try fetching subscription info from alternate API endpoints (once)."""
+    if not token or _account_info_cache["fetched"]:
+        return _account_info_cache.get("plan")
+    _account_info_cache["fetched"] = True
+    for url in [
+        "https://api.anthropic.com/api/me",
+        "https://api.anthropic.com/api/bootstrap",
+    ]:
+        try:
+            req = urllib.request.Request(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "anthropic-beta": "oauth-2025-04-20",
+                "User-Agent": "claude-code/2.1",
+            })
+            data = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
+            plan = _find_plan_in_dict(data)
+            if plan:
+                _account_info_cache["plan"] = plan
+                return plan
+        except Exception:
+            continue
+    return None
+
+
+def detect_subscription(data):
+    """Detect subscription plan from usage API response with heuristic fallback."""
+    if not data:
+        return {"plan": "unknown", "display": "Claude", "has_sonnet": False, "models": []}
+
+    # 1. Check usage API response for explicit plan/tier fields
+    plan = _find_plan_in_dict(data)
+
+    # 2. Try alternate account endpoints (lazy, cached)
+    if not plan:
+        token = get_oauth_token()
+        plan = _try_fetch_account_info(token)
+
+    # 3. Heuristic: sonnet window present → Max plan, absent → Pro
+    has_sonnet = bool(data.get("seven_day_sonnet")
+                      and isinstance(data.get("seven_day_sonnet"), dict)
+                      and data["seven_day_sonnet"].get("resets_at"))
+    if not plan:
+        plan = "max" if has_sonnet else "pro"
+
+    display = PLAN_DISPLAY.get(plan, plan.replace("_", " ").title())
+    models = PLAN_MODELS.get(plan, ["Opus", "Haiku"])
+    return {"plan": plan, "display": display, "has_sonnet": has_sonnet, "models": models}
 
 
 # ─── Config / Credentials ────────────────────────────────────────────
@@ -217,12 +316,14 @@ def parse_api_response(data):
         try: ra = datetime.fromisoformat(w.get("resets_at", ""))
         except Exception: pass
         return {"utilization": w.get("utilization", 0) or 0, "resets_at": ra}
+    sub = detect_subscription(data)
     return {
         "session": pw(data.get("five_hour")),
         "weekly_all": pw(data.get("seven_day")),
         "weekly_sonnet": pw(data.get("seven_day_sonnet")),
         "weekly_opus": pw(data.get("seven_day_opus")),
         "extra_usage": data.get("extra_usage"),
+        "subscription": sub,
     }
 
 
@@ -336,12 +437,17 @@ def create_battery_icon(pct_used_100):
     return img.resize((64, 64), Image.LANCZOS)
 
 def build_tooltip(usage):
-    if not usage: return "Claude Max — loading..."
+    if not usage: return "Claude — loading..."
+    sub = usage.get("subscription", {})
+    plan_name = sub.get("display", "Claude")
     sp = usage["session"]["utilization"]
     wp = usage["weekly_all"]["utilization"]
-    snp = usage["weekly_sonnet"]["utilization"] if usage["weekly_sonnet"]["resets_at"] else 0
-    return (f"Claude Max (5x)\n"
-            f"Session: {sp:.0f}%  |  Weekly: {wp:.0f}%  |  Sonnet: {snp:.0f}%\n"
+    parts = [f"Session: {sp:.0f}%", f"Weekly: {wp:.0f}%"]
+    if sub.get("has_sonnet"):
+        snp = usage["weekly_sonnet"]["utilization"] if usage["weekly_sonnet"]["resets_at"] else 0
+        parts.append(f"Sonnet: {snp:.0f}%")
+    return (f"Claude {plan_name}\n"
+            f"{'  |  '.join(parts)}\n"
             f"Resets in {time_until(usage['weekly_all']['resets_at'])}")
 
 
@@ -512,10 +618,12 @@ class DashboardWindow:
             height=30, width=80, corner_radius=6,
             text_color=DIM, border_width=1, border_color=BORDER)
         self._refresh_btn.pack(side="left", padx=(0, 8), pady=6)
+        sub = usage.get("subscription", {}) if usage else {}
+        plan_label = sub.get("display", "Claude")
         pill = ctk.CTkFrame(right, fg_color=SURFACE, corner_radius=6,
                             border_width=1, border_color=BORDER)
         pill.pack(side="left", pady=6)
-        ctk.CTkLabel(pill, text="  Max (5x)  ",
+        ctk.CTkLabel(pill, text=f"  {plan_label}  ",
                      font=ctk.CTkFont(size=11), text_color=ACCENT).pack(padx=2, pady=3)
 
         if not usage:
@@ -523,6 +631,9 @@ class DashboardWindow:
                          font=ctk.CTkFont(size=13), text_color=DIM).pack(pady=50)
             self._schedule_auto_refresh(10000)
             return
+
+        # ── Subscription info ──
+        self._build_subscription_card(main, usage)
 
         # ── Gauges ──
         self._build_gauges(main, usage)
@@ -570,6 +681,41 @@ class DashboardWindow:
         if usage:
             self._populate(usage, local)
 
+    # ── Subscription card ──
+
+    def _build_subscription_card(self, parent, usage):
+        sub = usage.get("subscription", {})
+        plan = sub.get("plan", "unknown")
+        display = sub.get("display", "Claude")
+        models = sub.get("models", [])
+
+        card = ctk.CTkFrame(parent, fg_color=SURFACE, corner_radius=12,
+                            border_width=1, border_color=BORDER)
+        card.pack(fill="x", padx=32, pady=(16, 0))
+
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=18, pady=(12, 4))
+        ctk.CTkLabel(row, text="Subscription",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT).pack(side="left")
+        plan_pill = ctk.CTkFrame(row, fg_color=ACCENT, corner_radius=4)
+        plan_pill.pack(side="right")
+        ctk.CTkLabel(plan_pill, text=f" {display} ",
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=TEXT).pack(padx=4, pady=2)
+
+        if models:
+            model_row = ctk.CTkFrame(card, fg_color="transparent")
+            model_row.pack(fill="x", padx=18, pady=(0, 10))
+            ctk.CTkLabel(model_row, text="Models",
+                         font=ctk.CTkFont(size=10), text_color=MUTED).pack(side="left", padx=(0, 8))
+            for m in models:
+                badge = ctk.CTkFrame(model_row, fg_color=TRACK, corner_radius=4,
+                                     border_width=1, border_color=BORDER)
+                badge.pack(side="left", padx=2)
+                ctk.CTkLabel(badge, text=f" {m} ",
+                             font=ctk.CTkFont(size=9), text_color=DIM).pack(padx=2, pady=1)
+
     # ── Gauges ──
 
     def _build_gauges(self, parent, usage):
@@ -582,7 +728,6 @@ class DashboardWindow:
 
         sp = usage["session"]["utilization"] / 100.0
         wp = usage["weekly_all"]["utilization"] / 100.0
-        sn = (usage["weekly_sonnet"]["utilization"]/100.0) if usage["weekly_sonnet"]["resets_at"] else 0
 
         rs = time_until(usage["session"]["resets_at"])
         rw = time_until(usage["weekly_all"]["resets_at"])
@@ -590,20 +735,34 @@ class DashboardWindow:
         r, t = 64, 9
         yc = 90
 
-        self._anim_target = {"s": sp, "w": wp, "n": sn}
-        self._anim_current = {"s": 0.0, "w": 0.0, "n": 0.0}
+        has_sonnet = usage.get("subscription", {}).get("has_sonnet", False)
+
+        if has_sonnet:
+            sn = (usage["weekly_sonnet"]["utilization"]/100.0) if usage["weekly_sonnet"]["resets_at"] else 0
+            self._anim_target = {"s": sp, "w": wp, "n": sn}
+            self._anim_current = {"s": 0.0, "w": 0.0, "n": 0.0}
+            self._gauge_keys = ["s", "w", "n"]
+            self._gm = {
+                "s": (98,  yc, r, t, "Session",    f"resets {rs}"),
+                "w": (288, yc, r, t, "All Models", f"resets {rw}"),
+                "n": (478, yc, r, t, "Sonnet",     f"resets {rw}"),
+            }
+        else:
+            self._anim_target = {"s": sp, "w": wp}
+            self._anim_current = {"s": 0.0, "w": 0.0}
+            self._gauge_keys = ["s", "w"]
+            self._gm = {
+                "s": (160, yc, r, t, "Session",    f"resets {rs}"),
+                "w": (400, yc, r, t, "All Models", f"resets {rw}"),
+            }
+
         self._gauge_w, self._gauge_h = 560, 180
-        self._gm = {
-            "s": (98,  yc, r, t, "Session",    f"resets {rs}"),
-            "w": (288, yc, r, t, "All Models", f"resets {rw}"),
-            "n": (478, yc, r, t, "Sonnet",     f"resets {rw}"),
-        }
         self._animate()
 
     def _animate(self):
         done = True
         gauges = []
-        for k in ["s", "w", "n"]:
+        for k in self._gauge_keys:
             cx, cy, r, t, lbl, sub = self._gm[k]
             tgt = self._anim_target[k]
             cur = self._anim_current[k]
@@ -632,13 +791,13 @@ class DashboardWindow:
 
         sp = usage["session"]["utilization"]
         wp = usage["weekly_all"]["utilization"]
-        sn = usage["weekly_sonnet"]["utilization"] if usage["weekly_sonnet"]["resets_at"] else 0
         rs = time_until(usage["session"]["resets_at"])
         rw = time_until(usage["weekly_all"]["resets_at"])
 
         self._bar_row(frame, "Current session", f"Resets in {rs}", sp)
         self._bar_row(frame, "All models",      f"Resets in {rw}", wp)
-        if usage["weekly_sonnet"]["resets_at"]:
+        if usage.get("subscription", {}).get("has_sonnet") and usage["weekly_sonnet"]["resets_at"]:
+            sn = usage["weekly_sonnet"]["utilization"]
             self._bar_row(frame, "Sonnet only",  f"Resets in {rw}", sn)
 
         # Show cache age if data is stale
