@@ -202,8 +202,10 @@ def refresh_oauth_token():
             if resp.get("expires_in"):
                 oauth["expiresAt"] = int(time.time() * 1000) + resp["expires_in"] * 1000
             creds["claudeAiOauth"] = oauth
-            with open(CREDENTIALS_PATH, "w", encoding="utf-8") as f:
+            tmp = CREDENTIALS_PATH.with_suffix(CREDENTIALS_PATH.suffix + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(creds, f, indent=2)
+            os.replace(tmp, CREDENTIALS_PATH)
             return resp["access_token"]
     except Exception:
         pass
@@ -220,9 +222,12 @@ MIN_FETCH_INTERVAL = 55
 
 
 def _save_cache_to_disk(data):
+    """Atomic write so a crash mid-write can't corrupt the cache."""
     try:
-        with open(USAGE_CACHE_PATH, "w") as f:
+        tmp = USAGE_CACHE_PATH.with_suffix(USAGE_CACHE_PATH.suffix + ".tmp")
+        with open(tmp, "w") as f:
             json.dump({"data": data, "time": time.time()}, f)
+        os.replace(tmp, USAGE_CACHE_PATH)
     except Exception:
         pass
 
@@ -337,31 +342,113 @@ def classify_model(s):
     if "haiku" in m: return "haiku"
     return "other"
 
+_jsonl_cache = {}
+_jsonl_cache_lock = threading.Lock()
+_RETENTION_DAYS = 14
+
+
+def _parse_jsonl_entry(line):
+    """Parse one JSONL line into (ts, model_class, input_tokens, output_tokens) or None."""
+    try:
+        d = json.loads(line)
+    except Exception:
+        return None
+    if d.get("type") != "assistant" or "message" not in d:
+        return None
+    mc = classify_model(d["message"].get("model", ""))
+    if mc is None:
+        return None
+    try:
+        ts = datetime.fromisoformat(d.get("timestamp", "").replace("Z", "+00:00"))
+    except Exception:
+        return None
+    u = d["message"].get("usage", {}) or {}
+    in_tok = (u.get("input_tokens", 0)
+              + u.get("cache_creation_input_tokens", 0)
+              + u.get("cache_read_input_tokens", 0))
+    out_tok = u.get("output_tokens", 0)
+    return (ts, mc, in_tok, out_tok)
+
+
+def _read_file_incremental(fpath, cached):
+    """Read new bytes from fpath since cached offset. Returns updated cache entry."""
+    try:
+        st = fpath.stat()
+    except Exception:
+        return None
+    mtime, size = st.st_mtime, st.st_size
+
+    # Reuse if unchanged
+    if cached and cached["mtime"] == mtime and cached["size"] == size:
+        return cached
+
+    # Truncated/rotated: reparse from scratch
+    if cached and size < cached["size"]:
+        cached = None
+
+    entries = list(cached["entries"]) if cached else []
+    offset = cached["offset"] if cached else 0
+
+    try:
+        with open(fpath, "rb") as fh:
+            fh.seek(offset)
+            new_bytes = fh.read()
+    except Exception:
+        return cached
+
+    if new_bytes:
+        nl = new_bytes.rfind(b"\n")
+        if nl < 0:
+            consumed = 0
+            chunk = b""
+        else:
+            consumed = nl + 1
+            chunk = new_bytes[:consumed]
+        for raw in chunk.splitlines():
+            try:
+                line = raw.decode("utf-8", errors="replace")
+            except Exception:
+                continue
+            entry = _parse_jsonl_entry(line)
+            if entry is not None:
+                entries.append(entry)
+        offset += consumed
+
+    return {"mtime": mtime, "size": size, "offset": offset, "entries": entries}
+
+
 def parse_local_breakdown():
     now = datetime.now(timezone.utc)
     week_ago = now - timedelta(days=7)
-    by_model = defaultdict(int)
-    daily = defaultdict(lambda: defaultdict(int))
-    tokens = {"input": 0, "output": 0, "requests": 0}
-    for fpath in PROJECTS_DIR.glob("**/*.jsonl"):
-        try:
-            with open(fpath, "r", encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    try:
-                        d = json.loads(line)
-                        if d.get("type") != "assistant" or "message" not in d: continue
-                        mc = classify_model(d["message"].get("model", ""))
-                        if mc is None: continue
-                        ts = datetime.fromisoformat(d.get("timestamp","").replace("Z","+00:00"))
-                        if ts < week_ago: continue
-                        by_model[mc] += 1
-                        daily[ts.strftime("%Y-%m-%d")][mc] += 1
-                        u = d["message"].get("usage", {})
-                        tokens["input"] += u.get("input_tokens",0) + u.get("cache_creation_input_tokens",0) + u.get("cache_read_input_tokens",0)
-                        tokens["output"] += u.get("output_tokens",0)
-                        tokens["requests"] += 1
-                    except Exception: continue
-        except Exception: continue
+    retention_cutoff = now - timedelta(days=_RETENTION_DAYS)
+
+    with _jsonl_cache_lock:
+        seen = set()
+        for fpath in PROJECTS_DIR.glob("**/*.jsonl"):
+            key = str(fpath)
+            seen.add(key)
+            updated = _read_file_incremental(fpath, _jsonl_cache.get(key))
+            if updated is None:
+                continue
+            if updated["entries"]:
+                updated["entries"] = [e for e in updated["entries"] if e[0] >= retention_cutoff]
+            _jsonl_cache[key] = updated
+
+        for stale in [k for k in _jsonl_cache if k not in seen]:
+            del _jsonl_cache[stale]
+
+        by_model = defaultdict(int)
+        daily = defaultdict(lambda: defaultdict(int))
+        tokens = {"input": 0, "output": 0, "requests": 0}
+        for cache_entry in _jsonl_cache.values():
+            for ts, mc, in_tok, out_tok in cache_entry["entries"]:
+                if ts < week_ago:
+                    continue
+                by_model[mc] += 1
+                daily[ts.strftime("%Y-%m-%d")][mc] += 1
+                tokens["input"] += in_tok
+                tokens["output"] += out_tok
+                tokens["requests"] += 1
     return {"by_model": dict(by_model), "daily": daily, "weekly_tokens": tokens}
 
 def format_tokens(n):
@@ -387,54 +474,38 @@ def _lerp_color(c1, c2, t):
     return f"#{int(r1+(r2-r1)*t):02x}{int(g1+(g2-g1)*t):02x}{int(b1+(b2-b1)*t):02x}"
 
 def create_battery_icon(pct_used_100):
-    """Vertical battery in Claude palette. Terracotta fill, cream text."""
-    pct = max(0, min(100, pct_used_100)) / 100.0
-    S = 128
+    """Number + vertical battery fill: orange rises from bottom proportional to remaining %."""
+    pct_used = max(0, min(100, pct_used_100)) / 100.0
+    remaining_pct = max(0.0, min(100.0, 100.0 - pct_used_100))
+    fill_frac = remaining_pct / 100.0
+
+    S = 512
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    bx, by, bw, bh = 28, 24, 72, 88
-    cap_w, cap_h = 28, 10
-    cap_x = bx + (bw - cap_w) // 2
+    draw.rounded_rectangle([0, 0, S, S], radius=80, fill="#1c1c1a")
 
-    # Cap
-    draw.rounded_rectangle([cap_x, by-cap_h+2, cap_x+cap_w, by+4],
-                           radius=4, fill="#6b6860")
-    # Shell
-    draw.rounded_rectangle([bx, by, bx+bw, by+bh], radius=10,
-                           fill="#1c1c1a", outline="#6b6860", width=3)
+    if fill_frac > 0.4:
+        bar_color = ACCENT
+    elif fill_frac > 0.15:
+        bar_color = _lerp_color(ACCENT, "#cc7722", (0.4 - fill_frac) / 0.25)
+    else:
+        bar_color = _lerp_color("#cc7722", "#aa2200", (0.15 - fill_frac) / 0.15)
 
-    fill_pct = 1.0 - pct
-    fill_h = int((bh - 8) * fill_pct)
+    fill_h = int(S * fill_frac)
+    if fill_h > 4:
+        draw.rounded_rectangle([0, S - fill_h, S, S], radius=80, fill=bar_color)
 
-    if fill_h > 2:
-        # Single color ramp: terracotta -> muted terracotta -> dark as it drains
-        if pct <= 0.6:
-            color = ACCENT                   # bright terracotta while healthy
-        elif pct <= 0.85:
-            color = _lerp_color(ACCENT, "#8b4532", (pct-0.6)/0.25)
-        else:
-            color = _lerp_color("#8b4532", "#5a2e1e", (pct-0.85)/0.15)
-
-        ft = by + bh - 4 - fill_h
-        fb = by + bh - 4
-        draw.rounded_rectangle([bx+4, ft, bx+bw-4, fb], radius=6, fill=color)
-
-        # Subtle glow
-        glow = Image.new("RGBA", (S, S), (0,0,0,0))
-        ImageDraw.Draw(glow).rounded_rectangle([bx+4, ft, bx+bw-4, fb], radius=6, fill=color)
-        glow = glow.filter(ImageFilter.GaussianBlur(6))
-        img = Image.alpha_composite(img, glow)
-        ImageDraw.Draw(img).rounded_rectangle([bx+4, ft, bx+bw-4, fb], radius=6, fill=color)
-
-    try: font = ImageFont.truetype("segoeuib.ttf", 26)
+    label = str(int(round(remaining_pct)))
+    font_size = 260 if len(label) < 3 else 210
+    try: font = ImageFont.truetype("C:/Windows/Fonts/ariblk.ttf", font_size)
     except Exception:
-        try: font = ImageFont.truetype("segoeui.ttf", 26)
+        try: font = ImageFont.truetype("C:/Windows/Fonts/segoeuib.ttf", font_size)
         except Exception: font = ImageFont.load_default()
 
-    ImageDraw.Draw(img).text((bx+bw//2, by+bh//2),
-                              str(int(pct_used_100)), fill=TEXT, font=font, anchor="mm")
-    return img.resize((64, 64), Image.LANCZOS)
+    draw.text((S // 2, S // 2 - 20), label, fill=TEXT, font=font, anchor="mm")
+
+    return img.resize((128, 128), Image.LANCZOS)
 
 def build_tooltip(usage):
     if not usage: return "Claude — loading..."
@@ -446,9 +517,17 @@ def build_tooltip(usage):
     if sub.get("has_sonnet"):
         snp = usage["weekly_sonnet"]["utilization"] if usage["weekly_sonnet"]["resets_at"] else 0
         parts.append(f"Sonnet: {snp:.0f}%")
+    age = int(time.time() - _last_usage_cache["time"])
+    if age < 60:
+        updated = f"{age}s ago"
+    else:
+        updated = f"{age // 60}m ago"
+    rs = time_until(usage['session']['resets_at'])
+    rw = time_until(usage['weekly_all']['resets_at'])
     return (f"Claude {plan_name}\n"
             f"{'  |  '.join(parts)}\n"
-            f"Resets in {time_until(usage['weekly_all']['resets_at'])}")
+            f"Session resets in {rs}  |  Weekly resets in {rw}\n"
+            f"Updated {updated}")
 
 
 # ─── PIL-rendered Arc Gauge (anti-aliased) ──────────────────────────
@@ -478,11 +557,11 @@ def render_gauge_image(width, height, gauges):
     muted_rgb = _hex_to_rgb(MUTED)
     glow_rgb = _blend_rgb(accent_rgb, bg_rgb, 0.18)
 
-    try: font_big = ImageFont.truetype("segoeuib.ttf", 22 * S)
+    try: font_big = ImageFont.truetype("C:/Windows/Fonts/segoeuib.ttf", 22 * S)
     except Exception: font_big = ImageFont.load_default()
-    try: font_med = ImageFont.truetype("segoeui.ttf", 10 * S)
+    try: font_med = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", 10 * S)
     except Exception: font_med = ImageFont.load_default()
-    try: font_sm = ImageFont.truetype("segoeui.ttf", 8 * S)
+    try: font_sm = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", 8 * S)
     except Exception: font_sm = ImageFont.load_default()
 
     for (cx, cy, radius, thickness, pct, label, sub, val_text) in gauges:
@@ -550,14 +629,26 @@ class DashboardWindow:
         self._overlay = None
         self._spinner_angle = 0
         self._auto_refresh_id = None
+        self._anim_after_id = None
 
     def show(self):
         if self._building: return
         if self.window is not None:
-            try: self.window.focus(); return
-            except Exception: self.window = None
+            try:
+                self.window.after(0, self._reveal)
+                return
+            except Exception:
+                self.window = None
         self._building = True
         threading.Thread(target=self._build, daemon=True).start()
+
+    def _reveal(self):
+        try:
+            self.window.deiconify()
+            self.window.lift()
+            self.window.focus_force()
+        except Exception:
+            self.window = None
 
     def _build(self):
         try:
@@ -590,6 +681,15 @@ class DashboardWindow:
 
     def _populate(self, usage, local):
         """Build or rebuild all content inside the window."""
+        if self._anim_after_id:
+            try: self.window.after_cancel(self._anim_after_id)
+            except Exception: pass
+            self._anim_after_id = None
+        if self._auto_refresh_id:
+            try: self.window.after_cancel(self._auto_refresh_id)
+            except Exception: pass
+            self._auto_refresh_id = None
+
         # Destroy old scrollable frame's children cleanly
         if self._content_frame:
             self._content_frame.pack_forget()
@@ -740,7 +840,6 @@ class DashboardWindow:
         if has_sonnet:
             sn = (usage["weekly_sonnet"]["utilization"]/100.0) if usage["weekly_sonnet"]["resets_at"] else 0
             self._anim_target = {"s": sp, "w": wp, "n": sn}
-            self._anim_current = {"s": 0.0, "w": 0.0, "n": 0.0}
             self._gauge_keys = ["s", "w", "n"]
             self._gm = {
                 "s": (98,  yc, r, t, "Session",    f"resets {rs}"),
@@ -749,12 +848,14 @@ class DashboardWindow:
             }
         else:
             self._anim_target = {"s": sp, "w": wp}
-            self._anim_current = {"s": 0.0, "w": 0.0}
             self._gauge_keys = ["s", "w"]
             self._gm = {
                 "s": (160, yc, r, t, "Session",    f"resets {rs}"),
                 "w": (400, yc, r, t, "All Models", f"resets {rw}"),
             }
+
+        prev = self._anim_current or {}
+        self._anim_current = {k: prev.get(k, 0.0) for k in self._gauge_keys}
 
         self._gauge_w, self._gauge_h = 560, 180
         self._animate()
@@ -780,8 +881,10 @@ class DashboardWindow:
         self._gauge_label.configure(image=self._gauge_photo)
 
         if not done:
-            try: self.window.after(16, self._animate)
+            try: self._anim_after_id = self.window.after(16, self._animate)
             except Exception: pass
+        else:
+            self._anim_after_id = None
 
     # ── Progress bar section ──
 
@@ -1027,11 +1130,15 @@ class DashboardWindow:
 
     def _on_close(self):
         if self._overlay:
-            self._overlay.destroy()
+            try: self._overlay.destroy()
+            except Exception: pass
             self._overlay = None
         if self.window:
-            self.window.destroy()
-            self.window = None
+            try: self.window.withdraw()
+            except Exception:
+                try: self.window.destroy()
+                except Exception: pass
+                self.window = None
 
 
 # ─── Main Monitor ─────────────────────────────────────────────────────
@@ -1057,7 +1164,8 @@ class ClaudeUsageMonitor:
 
     def _update_loop(self):
         while True:
-            time.sleep(self.cfg.get("refresh_interval_seconds", 30))
+            time.sleep(self.cfg.get("refresh_interval_seconds",
+                                    DEFAULT_CONFIG["refresh_interval_seconds"]))
             try:
                 self._refresh()
                 if self.icon and self.usage:
