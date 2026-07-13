@@ -1,22 +1,25 @@
 /* ── Claude Usage · terracotta dark dashboard ──────────────────────── */
 
 :root {
-  --bg: #141413;
-  --surface: #1c1c1a;
-  --surface-2: #211f1c;
-  --border: #2a2926;
-  --border-soft: #232220;
-  --accent: #c15f3c;
-  --accent-dim: #8b4532;
-  --text: #f4f3ee;
-  --dim: #b1ada1;
-  --muted: #6b6860;
-  --track: #252420;
+  /* Claude Pulse palette */
+  --bg: #12100e;
+  --surface: #1a1714;
+  --surface-2: #201d19;
+  --border: #2c2822;
+  --border-soft: #232019;
+  --accent: #d97757;
+  --accent-2: #e08a63; /* lighter orange for gradient tops */
+  --accent-dim: #8a4e39;
+  --text: #ede7de;
+  --dim: #9a9188;
+  --muted: #8a8177;
+  --faint: #6f675e;
+  --track: #2a2620;
 
-  --opus: #c15f3c;
-  --sonnet: #b1ada1;
-  --haiku: #7a7568;
-  --other: #4a4740;
+  --opus: #d97757;
+  --sonnet: #9a9188;
+  --haiku: #6f675e;
+  --other: #3a3631;
 
   --r-card: 18px;
   --r-tile: 12px;
@@ -24,10 +27,12 @@
 
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
   --shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.55);
-  --hair: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  --hair: inset 0 1px 0 rgba(255, 255, 255, 0.045);
 
   --font: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI",
     system-ui, -apple-system, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas,
+    "Courier New", monospace;
 }
 
 * {
@@ -59,11 +64,8 @@ body::before {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(
-    120% 80% at 50% -10%,
-    rgba(193, 95, 60, 0.06),
-    transparent 60%
-  );
+  background: radial-gradient(1200px 600px at 78% -8%, #241d17 0%, rgba(36, 29, 23, 0) 60%),
+    radial-gradient(900px 500px at 8% 108%, #1c1a17 0%, rgba(28, 26, 23, 0) 55%);
   z-index: 0;
 }
 
@@ -87,12 +89,10 @@ body::before {
 }
 
 .brand-mark {
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
   border-radius: 5px;
-  background: linear-gradient(150deg, var(--accent), var(--accent-dim));
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06),
-    0 2px 8px -1px rgba(193, 95, 60, 0.5);
+  background: url("logo.png") center / contain no-repeat;
 }
 
 .brand-name {
@@ -129,8 +129,70 @@ body::before {
   color: var(--text);
 }
 .winbtn-close:hover {
-  background: rgba(193, 95, 60, 0.16);
+  background: rgba(217, 119, 87, 0.16);
   color: var(--accent);
+}
+
+/* ── Update banner ─────────────────────────────────────────────────── */
+
+.update {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px 10px;
+  padding: 8px 8px 8px 14px;
+  background: linear-gradient(160deg, rgba(217, 119, 87, 0.14), rgba(217, 119, 87, 0.07));
+  border: 1px solid rgba(217, 119, 87, 0.35);
+  border-radius: var(--r-tile);
+  font-size: 12.5px;
+  color: var(--text);
+  z-index: 2;
+}
+.update[hidden] {
+  display: none;
+}
+.update span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.update-btn {
+  border: 0;
+  background: linear-gradient(160deg, var(--accent), var(--accent-dim));
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: var(--pill);
+  cursor: pointer;
+  transition: filter 0.2s var(--ease), transform 0.1s var(--ease);
+}
+.update-btn:hover {
+  filter: brightness(1.1);
+}
+.update-btn:active {
+  transform: scale(0.97);
+}
+.update-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.update-x {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: var(--pill);
+}
+.update-x:hover {
+  color: var(--text);
 }
 
 /* ── Account tabs ──────────────────────────────────────────────────── */
@@ -163,7 +225,7 @@ body::before {
   bottom: 4px;
   border-radius: var(--pill);
   background: linear-gradient(160deg, var(--accent), var(--accent-dim));
-  box-shadow: 0 4px 12px -4px rgba(193, 95, 60, 0.6);
+  box-shadow: 0 4px 12px -4px rgba(217, 119, 87, 0.6);
   transition: transform 0.42s var(--ease), width 0.42s var(--ease);
   z-index: 0;
 }
@@ -280,103 +342,127 @@ body::before {
   }
 }
 
-/* ── Hero (session ring) ───────────────────────────────────────────── */
+/* ── Session flyout ────────────────────────────────────────────────── */
 
-.hero {
+.flyout {
+  padding: 16px 18px 18px;
+}
+.flyout-head {
   display: flex;
   align-items: center;
-  gap: 18px;
-  padding: 20px;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
 }
-
-.ring {
+.flyout-id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* mini chip mirrors the tray icon: dark base + orange fill = % left */
+.chip {
   position: relative;
-  flex: 0 0 auto;
-  width: 132px;
-  height: 132px;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  flex: none;
 }
-.ring svg {
-  width: 100%;
-  height: 100%;
-  transform: rotate(-90deg);
-}
-.ring .track {
-  fill: none;
-  stroke: var(--track);
-  stroke-width: 10;
-}
-.ring .prog {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 10;
-  stroke-linecap: round;
-  transition: stroke-dashoffset 0.95s var(--ease), stroke 0.5s var(--ease);
-}
-.ring-center {
+.chip-fill {
   position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  transition: height 0.9s var(--ease);
 }
-.ring-pct {
-  font-size: 34px;
+.flyout-title {
+  font-size: 14px;
   font-weight: 650;
-  letter-spacing: -1px;
-  line-height: 1;
+  letter-spacing: -0.01em;
+}
+.flyout-plan {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.flyout-big {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 0 2px;
+}
+.big-num {
+  font-family: var(--mono);
+  font-weight: 800;
+  font-size: 54px;
+  line-height: 0.9;
+  letter-spacing: -3px;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
 }
-.ring-pct span {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--dim);
-  margin-left: 1px;
+.big-pct {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--accent);
 }
-.ring-label {
-  font-size: 10.5px;
+.big-cap {
+  margin-left: auto;
+  align-self: flex-end;
+  font-size: 12px;
   color: var(--muted);
-  margin-top: 5px;
-  letter-spacing: 0.4px;
 }
 
-.hero-side {
-  flex: 1 1 auto;
-  min-width: 0;
+.prog {
+  margin-top: 14px;
+  height: 10px;
+  border-radius: 6px;
+  background: var(--track);
+  overflow: hidden;
 }
-.hero-eyebrow {
-  font-size: 10.5px;
-  letter-spacing: 0.5px;
-  color: var(--muted);
-  text-transform: uppercase;
+.prog-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  box-shadow: 0 0 12px rgba(217, 119, 87, 0.5);
+  transition: width 0.9s var(--ease);
 }
-.hero-plan {
-  display: inline-flex;
+
+.srows {
+  margin-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+.srow {
+  display: flex;
   align-items: center;
-  margin-top: 6px;
-  padding: 5px 12px;
-  border-radius: var(--pill);
-  background: linear-gradient(150deg, var(--accent), var(--accent-dim));
-  color: #fff;
-  font-size: 13px;
-  font-weight: 650;
-  letter-spacing: 0.2px;
-  box-shadow: 0 4px 12px -4px rgba(193, 95, 60, 0.55);
+  justify-content: space-between;
+  padding: 10px 0;
 }
-.hero-reset {
-  margin-top: 12px;
-  font-size: 12px;
+.srow + .srow {
+  border-top: 1px solid var(--border-soft);
+}
+.srow-k {
+  font-size: 13px;
   color: var(--dim);
 }
-.hero-reset b {
+.srow-v {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 13px;
   color: var(--text);
-  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
+
 .badges {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin-top: 12px;
+  margin-top: 14px;
 }
 .badge {
   font-size: 10px;
@@ -614,7 +700,7 @@ body::before {
   }
 }
 .skel-hero {
-  height: 172px;
+  height: 216px;
 }
 .skel-row {
   height: 118px;

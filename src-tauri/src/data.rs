@@ -317,6 +317,7 @@ enum ApiErr {
 
 fn oauth_get(url: &str, token: &str) -> ureq::Request {
     ureq::get(url)
+        .timeout(std::time::Duration::from_secs(15))
         .set("Authorization", &format!("Bearer {token}"))
         .set("Accept", "application/json")
         .set("anthropic-beta", "oauth-2025-04-20")
@@ -368,6 +369,7 @@ impl Account {
             .as_str()?
             .to_string();
         let resp = ureq::post("https://api.anthropic.com/api/oauth/token")
+            .timeout(std::time::Duration::from_secs(15))
             .set("Content-Type", "application/json")
             .set("User-Agent", "claude-code/2.1")
             .send_json(json!({"grant_type": "refresh_token", "refresh_token": refresh}))

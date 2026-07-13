@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "2.1.0"
+version = "2.2.0"
 description = "Claude Usage"
 authors = ["you"]
 license = ""
@@ -24,10 +24,12 @@ tauri = { version = "2.11.3", features = ["tray-icon"] }
 ureq = { version = "2", features = ["json"] }
 walkdir = "2"
 dirs = "5"
+fontdue = "0.9"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-image = "0.25"
-imageproc = "0.25"
-ab_glyph = "0.2"
+
+# debug symbols cost multiple GB of target/ for no benefit here
+[profile.dev]
+debug = false
 
 [profile.release]
 opt-level = "s"

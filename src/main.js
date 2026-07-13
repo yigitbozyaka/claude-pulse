@@ -2,8 +2,8 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const { getCurrentWindow } = window.__TAURI__.window;
 
-const RING_C = 2 * Math.PI * 52;
 const MODEL_ORDER = ["opus", "sonnet", "haiku", "other"];
+const SESSION_MS = 5 * 3600 * 1000; // the API's `five_hour` window
 const MODEL_NAME = { opus: "Opus", sonnet: "Sonnet", haiku: "Haiku", other: "Other" };
 const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -32,17 +32,24 @@ function esc(s) {
 function sumModels(bm) {
   return MODEL_ORDER.reduce((a, m) => a + (bm[m] || 0), 0);
 }
-function lerp(a, b, t) {
-  t = Math.max(0, Math.min(1, t));
-  const p = (i) => Math.round(a[i] + (b[i] - a[i]) * t);
-  return `rgb(${p(0)},${p(1)},${p(2)})`;
-}
-function colorFor(used) {
-  const rem = (100 - used) / 100;
-  const AC = [193, 95, 60], AM = [204, 119, 34], RD = [200, 60, 40];
-  if (rem > 0.4) return "rgb(193,95,60)";
-  if (rem > 0.15) return lerp(AC, AM, (0.4 - rem) / 0.25);
-  return lerp(AM, RD, (0.15 - rem) / 0.15);
+// Window start + burn rate, derived from the session reset timestamp.
+function sessionExtras(u) {
+  const iso = u.session.resets_at;
+  const reset = iso ? new Date(iso) : null;
+  if (!reset || isNaN(reset)) return { started: null, burn: null };
+  const start = new Date(reset.getTime() - SESSION_MS);
+  const started = start.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const elapsedH = (Date.now() - start.getTime()) / 3600000;
+  let burn = null;
+  if (elapsedH > 0.05) {
+    const rate = u.session.utilization / elapsedH;
+    burn = "~" + (rate >= 10 ? Math.round(rate) : rate.toFixed(1)) + "%/h";
+  }
+  return { started, burn };
 }
 
 // ── tabs ────────────────────────────────────────────────────────────
@@ -177,29 +184,36 @@ function buildView(data) {
 // ── cards ───────────────────────────────────────────────────────────
 
 function heroCard(u) {
-  const used = Math.round(u.session.utilization);
+  const left = Math.round(Math.min(Math.max(100 - u.session.utilization, 0), 100));
+  const { started, burn } = sessionExtras(u);
   const badges = (u.subscription.models || [])
     .map((m) => `<span class="badge">${esc(m)}</span>`)
     .join("");
+  const rows = [
+    ["Resets in", esc(u.session.resets_in || "now")],
+    started && ["Window started", esc(started)],
+    burn && ["Burn rate", esc(burn)],
+  ]
+    .filter(Boolean)
+    .map(([k, v]) => `<div class="srow"><span class="srow-k">${k}</span><span class="srow-v">${v}</span></div>`)
+    .join("");
   return `
-  <section class="card hero rise">
-    <div class="ring">
-      <svg viewBox="0 0 120 120">
-        <circle class="track" cx="60" cy="60" r="52"></circle>
-        <circle class="prog" cx="60" cy="60" r="52"
-          stroke-dasharray="${RING_C.toFixed(1)}" stroke-dashoffset="${RING_C.toFixed(1)}"></circle>
-      </svg>
-      <div class="ring-center">
-        <div class="ring-pct">${used}<span>%</span></div>
-        <div class="ring-label">session used</div>
+  <section class="card flyout rise">
+    <div class="flyout-head">
+      <div class="flyout-id">
+        <span class="chip"><span class="chip-fill" data-left="${left}"></span></span>
+        <span class="flyout-title">Session</span>
       </div>
+      <span class="flyout-plan">${esc(u.subscription.display)}</span>
     </div>
-    <div class="hero-side">
-      <div class="hero-eyebrow">Subscription</div>
-      <div class="hero-plan">${esc(u.subscription.display)}</div>
-      <div class="hero-reset">Resets in <b>${esc(u.session.resets_in || "now")}</b></div>
-      <div class="badges">${badges}</div>
+    <div class="flyout-big">
+      <span class="big-num" data-left="${left}">0</span>
+      <span class="big-pct">%</span>
+      <span class="big-cap">of session left</span>
     </div>
+    <div class="prog"><div class="prog-fill" data-left="${left}"></div></div>
+    <div class="srows">${rows}</div>
+    ${badges ? `<div class="badges">${badges}</div>` : ""}
   </section>`;
 }
 
@@ -298,15 +312,13 @@ function stagger() {
 }
 
 function animateValues(data) {
-  const u = data.usage;
-  if (u) {
-    const prog = view.querySelector(".ring .prog");
-    if (prog) {
-      const off = RING_C * (1 - Math.min(u.session.utilization, 100) / 100);
-      prog.style.stroke = colorFor(u.session.utilization);
-      requestAnimationFrame(() => (prog.style.strokeDashoffset = off.toFixed(1)));
-    }
-  }
+  // session flyout: fill the chip + progress bar, snap the big numeral
+  view.querySelectorAll(".chip-fill, .prog-fill").forEach((el) => {
+    const dim = el.classList.contains("chip-fill") ? "height" : "width";
+    requestAnimationFrame(() => (el.style[dim] = el.dataset.left + "%"));
+  });
+  const big = view.querySelector(".big-num");
+  if (big) big.textContent = big.dataset.left;
   view.querySelectorAll(".bar-fill").forEach((el) => {
     const p = Math.max(+el.dataset.pct, 0);
     requestAnimationFrame(() => (el.style.width = p + "%"));
@@ -328,6 +340,35 @@ function wireFooter() {
       btn.classList.add("spin");
       await refreshCurrent(true);
     };
+}
+
+// ── auto-update ─────────────────────────────────────────────────────
+
+async function checkUpdate() {
+  let info = null;
+  try {
+    info = await invoke("check_update");
+  } catch (e) {
+    return;
+  }
+  if (!info) return;
+  const bar = $("#update");
+  const text = $("#updateText");
+  const btn = $("#updateBtn");
+  text.textContent = `Version ${info.version} is available`;
+  bar.hidden = false;
+  $("#updateDismiss").onclick = () => (bar.hidden = true);
+  btn.onclick = async () => {
+    btn.disabled = true;
+    text.textContent = "Downloading update…";
+    try {
+      await invoke("install_update", { url: info.url });
+      text.textContent = "Restarting…";
+    } catch (e) {
+      text.textContent = "Update failed — " + e;
+      btn.disabled = false;
+    }
+  };
 }
 
 // ── init ────────────────────────────────────────────────────────────
@@ -353,6 +394,7 @@ async function init() {
     if (!busy) refreshCurrent(true);
   });
   window.addEventListener("resize", moveHi);
+  checkUpdate();
 }
 
 init();
