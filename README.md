@@ -12,8 +12,16 @@
 </p>
 
 <p align="center">
-  Version 2.0 is a full rewrite in <a href="https://tauri.app">Tauri</a>
-  (Rust backend + web frontend), replacing the original Python/tkinter app.
+  Built in <a href="https://tauri.app">Tauri</a> (Rust backend + web frontend).
+</p>
+
+<p align="center">
+  <img src="docs/tray.png" width="640" alt="Tray battery icon across session states"><br>
+  <em>The tray icon — remaining session % as a filling battery, in JetBrains Mono.</em>
+</p>
+
+<p align="center">
+  <img src="docs/app.png" width="360" alt="Claude Pulse dashboard">
 </p>
 
 ## Features
@@ -21,14 +29,19 @@
 - **Multi-account** — auto-detects every Claude config dir (`~/.claude`,
   `~/.claude-work`, …) and switches between them via dashboard tabs or the tray
   menu.
-- **Live tray battery icon** — remaining session % rendered as a colour-coded
-  battery (terracotta → amber → red as it depletes).
-- **Dashboard** — session ring gauge, weekly limit meters (all models / Sonnet /
-  Opus), model distribution, a 7-day activity chart, and weekly token totals.
+- **Live tray battery icon** — remaining session % as a Claude-orange battery
+  that fills from the bottom, with the number set in JetBrains Mono ExtraBold and
+  rendered supersampled at the exact size Windows requests.
+- **Session flyout** — big "% of session left", a progress bar, and *resets in*,
+  *window started* and *burn rate* at a glance.
+- **Dashboard** — weekly limit meters (all models / Sonnet / Opus), model
+  distribution, a 7-day activity chart, and weekly token totals.
 - **Accurate plan detection** — reads the real subscription (`Pro` / `Max 5x` /
   `Max 20x` / `Team`) from Claude Code's credentials, per account.
+- **Self-updating** — checks GitHub releases and updates the portable exe
+  in place, no installer needed.
 - **Per-account caching** with atomic writes and rate-limit backoff. Frameless,
-  dark, terracotta UI; closing the window hides it back to the tray.
+  dark UI; closing the window hides it back to the tray.
 
 ## Requirements
 
@@ -65,14 +78,14 @@ thread refreshes the active account every 60s and updates the tray icon.
 
 ## Design
 
-Terracotta palette inspired by Claude's brand:
+"Claude Pulse" palette, inspired by Claude's brand:
 
 | Element    | Colour    |
 |------------|-----------|
-| Background | `#141413` |
-| Surface    | `#1c1c1a` |
-| Accent     | `#c15f3c` |
-| Text       | `#f4f3ee` |
+| Background | `#12100e` |
+| Surface    | `#1a1714` |
+| Accent     | `#d97757` |
+| Text       | `#ede7de` |
 
 ## License
 

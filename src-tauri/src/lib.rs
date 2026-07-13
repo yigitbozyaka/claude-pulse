@@ -1,5 +1,6 @@
 mod data;
 mod icon;
+mod update;
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -39,33 +40,37 @@ fn get_active(state: State<Shared>) -> usize {
     state.lock().unwrap().active
 }
 
+// These commands touch the network (get_data -> fetch_usage -> ureq). They MUST
+// be async: Tauri runs sync commands on the main event-loop thread, so a blocking
+// fetch there freezes the whole UI (you can't even minimize). async commands run
+// off the main thread, keeping the window responsive while data loads.
 #[tauri::command]
-fn get_account(idx: usize, state: State<Shared>) -> Option<AccountData> {
+async fn get_account(idx: usize, state: State<'_, Shared>) -> Result<Option<AccountData>, ()> {
     let mut st = state.lock().unwrap();
-    st.accounts.get_mut(idx).map(|a| a.get_data())
+    Ok(st.accounts.get_mut(idx).map(|a| a.get_data()))
 }
 
 #[tauri::command]
-fn set_active(app: AppHandle, idx: usize, state: State<Shared>) -> Option<AccountData> {
+async fn set_active(app: AppHandle, idx: usize, state: State<'_, Shared>) -> Result<Option<AccountData>, ()> {
     let data = {
         let mut st = state.lock().unwrap();
         if idx >= st.accounts.len() {
-            return None;
+            return Ok(None);
         }
         st.active = idx;
         st.accounts[idx].get_data()
     };
     update_tray(&app, &data);
     update_checks(&app, idx);
-    Some(data)
+    Ok(Some(data))
 }
 
 #[tauri::command]
-fn rename_account(app: AppHandle, idx: usize, name: String, state: State<Shared>) -> Vec<String> {
+async fn rename_account(app: AppHandle, idx: usize, name: String, state: State<'_, Shared>) -> Result<Vec<String>, ()> {
     let (names, is_active) = {
         let mut st = state.lock().unwrap();
         if idx >= st.accounts.len() {
-            return st.accounts.iter().map(|a| a.name.clone()).collect();
+            return Ok(st.accounts.iter().map(|a| a.name.clone()).collect());
         }
         let trimmed = name.trim().chars().take(24).collect::<String>();
         if !trimmed.is_empty() {
@@ -85,35 +90,51 @@ fn rename_account(app: AppHandle, idx: usize, name: String, state: State<Shared>
             }
         }
     }
-    // active account renamed -> refresh tray tooltip (cached, no network)
+    // active account renamed -> refresh tray tooltip + icon
     if is_active {
         refresh_active(&app);
     }
-    names
+    Ok(names)
+}
+
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<Option<update::UpdateInfo>, ()> {
+    Ok(update::check(&app.package_info().version.to_string()))
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle, url: String) -> Result<(), String> {
+    update::install(&url)?;
+    app.exit(0);
+    Ok(())
 }
 
 // ─── Tray helpers ────────────────────────────────────────────────────
+
+/// First `n` chars of `s` (char-safe).
+fn clip(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
 
 fn tooltip(data: &AccountData) -> String {
     match &data.usage {
         None => format!("{} - loading...", data.name),
         Some(u) => {
-            let mut parts = vec![
-                format!("Session: {:.0}%", u.session.utilization),
-                format!("Weekly: {:.0}%", u.weekly_all.utilization),
-            ];
-            if u.subscription.has_sonnet && u.weekly_sonnet.resets_at.is_some() {
-                parts.push(format!("Sonnet: {:.0}%", u.weekly_sonnet.utilization));
-            }
-            format!(
-                "{} · Claude {}\n{}\nSession resets in {}  |  Weekly resets in {}\nUpdated {}",
-                data.name,
-                u.subscription.display,
-                parts.join("  |  "),
-                u.session.resets_in,
-                u.weekly_all.resets_in,
-                u.updated_ago
-            )
+            // Windows truncates the tray tooltip (szTip) at 64 chars, mid-string.
+            // Keep it under that; full detail lives in the window.
+            let resets = if u.session.resets_in.is_empty() {
+                "now"
+            } else {
+                &u.session.resets_in
+            };
+            let tip = format!(
+                "{}\nSession {:.0}% · resets {}\nWeekly {:.0}%",
+                clip(&data.name, 20),
+                u.session.utilization,
+                resets,
+                u.weekly_all.utilization
+            );
+            clip(&tip, 63)
         }
     }
 }
@@ -188,7 +209,9 @@ pub fn run() {
             get_active,
             get_account,
             set_active,
-            rename_account
+            rename_account,
+            check_update,
+            install_update
         ])
         .setup(|app| {
             let handle = app.handle().clone();
