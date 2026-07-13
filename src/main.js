@@ -1,0 +1,325 @@
+const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
+const { getCurrentWindow } = window.__TAURI__.window;
+
+const RING_C = 2 * Math.PI * 52;
+const MODEL_ORDER = ["opus", "sonnet", "haiku", "other"];
+const MODEL_NAME = { opus: "Opus", sonnet: "Sonnet", haiku: "Haiku", other: "Other" };
+const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const $ = (s) => document.querySelector(s);
+const view = $("#view");
+const tabsNav = $("#tabs");
+const tabTrack = $("#tabTrack");
+const tabHi = $("#tabHi");
+
+let accounts = [];
+let active = 0;
+let busy = false;
+
+// ── helpers ─────────────────────────────────────────────────────────
+
+function fmtTokens(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+  return "" + n;
+}
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
+  );
+}
+function sumModels(bm) {
+  return MODEL_ORDER.reduce((a, m) => a + (bm[m] || 0), 0);
+}
+function lerp(a, b, t) {
+  t = Math.max(0, Math.min(1, t));
+  const p = (i) => Math.round(a[i] + (b[i] - a[i]) * t);
+  return `rgb(${p(0)},${p(1)},${p(2)})`;
+}
+function colorFor(used) {
+  const rem = (100 - used) / 100;
+  const AC = [193, 95, 60], AM = [204, 119, 34], RD = [200, 60, 40];
+  if (rem > 0.4) return "rgb(193,95,60)";
+  if (rem > 0.15) return lerp(AC, AM, (0.4 - rem) / 0.25);
+  return lerp(AM, RD, (0.15 - rem) / 0.15);
+}
+
+// ── tabs ────────────────────────────────────────────────────────────
+
+function buildTabs() {
+  if (accounts.length < 2) {
+    tabsNav.hidden = true;
+    return;
+  }
+  tabsNav.hidden = false;
+  [...tabTrack.querySelectorAll(".tab")].forEach((b) => b.remove());
+  accounts.forEach((name, i) => {
+    const b = document.createElement("button");
+    b.className = "tab" + (i === active ? " active" : "");
+    b.textContent = name;
+    b.onclick = () => selectTab(i);
+    tabTrack.appendChild(b);
+  });
+  tabHi.style.left = "0px";
+  requestAnimationFrame(moveHi);
+}
+function moveHi() {
+  const el = tabTrack.querySelectorAll(".tab")[active];
+  if (!el) return;
+  tabHi.style.width = el.offsetWidth + "px";
+  tabHi.style.transform = `translateX(${el.offsetLeft - tabTrack.clientLeft}px)`;
+}
+function markActiveTab() {
+  tabTrack
+    .querySelectorAll(".tab")
+    .forEach((b, i) => b.classList.toggle("active", i === active));
+}
+async function selectTab(i) {
+  if (i === active || busy) return;
+  active = i;
+  markActiveTab();
+  moveHi();
+  await render(invoke("set_active", { idx: i }));
+}
+
+// ── render pipeline ─────────────────────────────────────────────────
+
+async function render(promise, { skeleton = true } = {}) {
+  busy = true;
+  if (skeleton && !reduce) showSkeleton();
+  let data = null;
+  try {
+    data = await promise;
+  } catch (e) {
+    data = null;
+  }
+  busy = false;
+  if (data) buildView(data);
+  else showError();
+}
+function refreshCurrent(silent) {
+  return render(invoke("get_account", { idx: active }), { skeleton: !silent });
+}
+
+function showSkeleton() {
+  view.innerHTML =
+    '<div class="skel skel-hero"></div><div class="skel skel-row"></div>' +
+    '<div class="skel skel-tall"></div><div class="skel skel-row"></div>';
+}
+function showError() {
+  view.innerHTML =
+    '<div class="card"><div class="notice">Couldn\'t load usage.<br>Retrying automatically…</div></div>';
+}
+
+function buildView(data) {
+  const u = data.usage;
+  const local = data.local;
+  const parts = [];
+
+  if (u) {
+    parts.push(heroCard(u));
+    parts.push(limitsCard(u));
+  } else {
+    parts.push(
+      `<section class="card rise"><div class="notice">Couldn't reach Anthropic.<br><b>${esc(
+        data.name
+      )}</b> · retrying automatically…</div></section>`
+    );
+  }
+
+  if (local && (local.weekly_tokens.requests > 0 || sumModels(local.by_model) > 0)) {
+    if (sumModels(local.by_model) > 0) parts.push(distCard(local));
+    parts.push(dailyCard(local));
+    parts.push(tokensCard(local));
+  }
+
+  parts.push(footer(u));
+  view.innerHTML = parts.join("");
+  stagger();
+  requestAnimationFrame(() => animateValues(data));
+  wireFooter();
+}
+
+// ── cards ───────────────────────────────────────────────────────────
+
+function heroCard(u) {
+  const used = Math.round(u.session.utilization);
+  const badges = (u.subscription.models || [])
+    .map((m) => `<span class="badge">${esc(m)}</span>`)
+    .join("");
+  return `
+  <section class="card hero rise">
+    <div class="ring">
+      <svg viewBox="0 0 120 120">
+        <circle class="track" cx="60" cy="60" r="52"></circle>
+        <circle class="prog" cx="60" cy="60" r="52"
+          stroke-dasharray="${RING_C.toFixed(1)}" stroke-dashoffset="${RING_C.toFixed(1)}"></circle>
+      </svg>
+      <div class="ring-center">
+        <div class="ring-pct">${used}<span>%</span></div>
+        <div class="ring-label">session used</div>
+      </div>
+    </div>
+    <div class="hero-side">
+      <div class="hero-eyebrow">Subscription</div>
+      <div class="hero-plan">${esc(u.subscription.display)}</div>
+      <div class="hero-reset">Resets in <b>${esc(u.session.resets_in || "now")}</b></div>
+      <div class="badges">${badges}</div>
+    </div>
+  </section>`;
+}
+
+function meterRow(name, sub, pct) {
+  return `<div class="meter">
+    <div class="meter-head">
+      <div><div class="meter-name">${esc(name)}</div><div class="meter-sub">${sub}</div></div>
+      <div class="meter-val">${Math.round(pct)}%</div>
+    </div>
+    <div class="bar"><div class="bar-fill" data-pct="${Math.min(pct, 100)}"></div></div>
+  </div>`;
+}
+function limitsCard(u) {
+  const rows = [
+    meterRow("All models", `Resets in ${esc(u.weekly_all.resets_in || "now")}`, u.weekly_all.utilization),
+  ];
+  if (u.subscription.has_sonnet && u.weekly_sonnet.resets_at) {
+    rows.push(meterRow("Sonnet", `Resets in ${esc(u.weekly_sonnet.resets_in || "now")}`, u.weekly_sonnet.utilization));
+  }
+  if (u.weekly_opus && u.weekly_opus.resets_at) {
+    rows.push(meterRow("Opus", `Resets in ${esc(u.weekly_opus.resets_in || "now")}`, u.weekly_opus.utilization));
+  }
+  return `<section class="card rise"><div class="card-title">Weekly limits</div>${rows.join("")}</section>`;
+}
+
+function distCard(local) {
+  const bm = local.by_model;
+  const total = Math.max(sumModels(bm), 1);
+  let segs = "", leg = "";
+  MODEL_ORDER.forEach((m) => {
+    const c = bm[m] || 0;
+    if (!c) return;
+    const p = (c / total) * 100;
+    segs += `<div class="dist-seg" style="background:var(--${m})" data-w="${p}"></div>`;
+    leg += `<div class="legend-item"><span class="dot" style="background:var(--${m})"></span>${MODEL_NAME[m]} ${Math.round(p)}%</div>`;
+  });
+  return `<section class="card rise"><div class="card-title">Model distribution</div><div class="dist-bar">${segs}</div><div class="legend">${leg}</div></section>`;
+}
+
+function dailyCard(local) {
+  const days = local.daily;
+  const max = Math.max(...days.map((d) => d.total), 1);
+  const AREA = 72;
+  const cols = days
+    .map((d, i) => {
+      const today = i === days.length - 1;
+      const h = d.total > 0 ? Math.max((d.total / max) * AREA, 6) : 0;
+      return `<div class="col ${today ? "today" : ""}">
+        <div class="col-count">${d.total > 0 ? d.total : ""}</div>
+        <div class="col-bar ${d.total > 0 ? "" : "empty"}" data-h="${h.toFixed(0)}"></div>
+        <div class="col-day">${esc(d.day)}</div>
+      </div>`;
+    })
+    .join("");
+  return `<section class="card rise">
+    <div class="card-head">
+      <div class="card-title">Daily activity</div>
+      <div class="card-note">requests / day</div>
+    </div>
+    <div class="chart">${cols}</div></section>`;
+}
+
+function tokensCard(local) {
+  const wt = local.weekly_tokens;
+  const tile = (label, val) =>
+    `<div class="tile"><div class="tile-val">${val}</div><div class="tile-label">${label}</div></div>`;
+  return `<section class="card rise"><div class="card-title">Token usage this week</div>
+    <div class="tiles">
+      ${tile("Input", fmtTokens(wt.input))}
+      ${tile("Output", fmtTokens(wt.output))}
+      ${tile("Requests", "" + wt.requests)}
+    </div></section>`;
+}
+
+function footer(u) {
+  const stale = u && u.stale;
+  const status = u
+    ? `Updated ${esc(u.updated_ago)}${stale ? " · cached (rate-limited)" : ""}`
+    : "Waiting for data…";
+  return `<div class="foot">
+    <span class="foot-status ${stale ? "stale" : ""}">${status}</span>
+    <button class="refresh" id="refreshBtn">
+      <svg width="13" height="13" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+      Refresh
+    </button>
+  </div>`;
+}
+
+// ── animation + wiring ──────────────────────────────────────────────
+
+function stagger() {
+  if (reduce) return;
+  view.querySelectorAll(".rise").forEach((el, i) => {
+    el.style.animationDelay = i * 55 + "ms";
+  });
+}
+
+function animateValues(data) {
+  const u = data.usage;
+  if (u) {
+    const prog = view.querySelector(".ring .prog");
+    if (prog) {
+      const off = RING_C * (1 - Math.min(u.session.utilization, 100) / 100);
+      prog.style.stroke = colorFor(u.session.utilization);
+      requestAnimationFrame(() => (prog.style.strokeDashoffset = off.toFixed(1)));
+    }
+  }
+  view.querySelectorAll(".bar-fill").forEach((el) => {
+    const p = Math.max(+el.dataset.pct, 0);
+    requestAnimationFrame(() => (el.style.width = p + "%"));
+  });
+  view.querySelectorAll(".dist-seg").forEach((el) => {
+    requestAnimationFrame(() => (el.style.width = +el.dataset.w + "%"));
+  });
+  view.querySelectorAll(".col-bar").forEach((el) => {
+    if (el.dataset.h !== undefined)
+      requestAnimationFrame(() => (el.style.height = +el.dataset.h + "px"));
+  });
+}
+
+function wireFooter() {
+  const btn = view.querySelector("#refreshBtn");
+  if (btn)
+    btn.onclick = async () => {
+      if (busy) return;
+      btn.classList.add("spin");
+      await refreshCurrent(true);
+    };
+}
+
+// ── init ────────────────────────────────────────────────────────────
+
+async function init() {
+  $("#min").onclick = () => getCurrentWindow().minimize();
+  $("#close").onclick = () => getCurrentWindow().hide();
+
+  accounts = await invoke("list_accounts");
+  active = await invoke("get_active");
+  buildTabs();
+  await render(invoke("get_account", { idx: active }));
+
+  await listen("account-changed", (e) => {
+    const i = e.payload;
+    if (i === active) return;
+    active = i;
+    markActiveTab();
+    moveHi();
+    render(invoke("get_account", { idx: i }));
+  });
+  await listen("usage-updated", () => {
+    if (!busy) refreshCurrent(true);
+  });
+  window.addEventListener("resize", moveHi);
+}
+
+init();

@@ -1,0 +1,621 @@
+/* ── Claude Usage · terracotta dark dashboard ──────────────────────── */
+
+:root {
+  --bg: #141413;
+  --surface: #1c1c1a;
+  --surface-2: #211f1c;
+  --border: #2a2926;
+  --border-soft: #232220;
+  --accent: #c15f3c;
+  --accent-dim: #8b4532;
+  --text: #f4f3ee;
+  --dim: #b1ada1;
+  --muted: #6b6860;
+  --track: #252420;
+
+  --opus: #c15f3c;
+  --sonnet: #b1ada1;
+  --haiku: #7a7568;
+  --other: #4a4740;
+
+  --r-card: 18px;
+  --r-tile: 12px;
+  --pill: 999px;
+
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.55);
+  --hair: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+
+  --font: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI",
+    system-ui, -apple-system, sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* subtle warm vignette so the flat bg has depth */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 80% at 50% -10%,
+    rgba(193, 95, 60, 0.06),
+    transparent 60%
+  );
+  z-index: 0;
+}
+
+/* ── Titlebar ──────────────────────────────────────────────────────── */
+
+.titlebar {
+  height: 42px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 16px;
+  position: relative;
+  z-index: 3;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.brand-mark {
+  width: 15px;
+  height: 15px;
+  border-radius: 5px;
+  background: linear-gradient(150deg, var(--accent), var(--accent-dim));
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 2px 8px -1px rgba(193, 95, 60, 0.5);
+}
+
+.brand-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--dim);
+}
+
+.winctl {
+  display: flex;
+  gap: 2px;
+}
+
+.winbtn {
+  width: 34px;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.16s var(--ease), color 0.16s var(--ease);
+}
+.winbtn svg {
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+.winbtn:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+.winbtn-close:hover {
+  background: rgba(193, 95, 60, 0.16);
+  color: var(--accent);
+}
+
+/* ── Account tabs ──────────────────────────────────────────────────── */
+
+.tabs {
+  flex: 0 0 auto;
+  padding: 2px 16px 10px;
+  display: flex;
+  justify-content: center;
+  position: relative;
+  z-index: 2;
+}
+.tabs[hidden] {
+  display: none;
+}
+
+.tab-track {
+  position: relative;
+  display: inline-flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--pill);
+  padding: 4px;
+  box-shadow: var(--hair);
+}
+
+.tab-hi {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: var(--pill);
+  background: linear-gradient(160deg, var(--accent), var(--accent-dim));
+  box-shadow: 0 4px 12px -4px rgba(193, 95, 60, 0.6);
+  transition: transform 0.42s var(--ease), width 0.42s var(--ease);
+  z-index: 0;
+}
+
+.tab {
+  position: relative;
+  z-index: 1;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  padding: 7px 20px;
+  border-radius: var(--pill);
+  cursor: pointer;
+  transition: color 0.28s var(--ease);
+  white-space: nowrap;
+}
+.tab.active {
+  color: #fff;
+}
+
+/* ── Scroll area ───────────────────────────────────────────────────── */
+
+.scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+  z-index: 1;
+}
+.scroll::-webkit-scrollbar {
+  width: 9px;
+}
+.scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+  border: 3px solid var(--bg);
+}
+.scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+.view {
+  padding: 4px 16px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Cards ─────────────────────────────────────────────────────────── */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow), var(--hair);
+  padding: 16px 18px;
+}
+
+.card-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--dim);
+  margin-bottom: 14px;
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.card-head .card-title {
+  margin-bottom: 0;
+}
+.card-note {
+  font-size: 10.5px;
+  color: var(--muted);
+  letter-spacing: 0.2px;
+}
+
+/* enter animation */
+.rise {
+  opacity: 0;
+  transform: translateY(10px);
+  animation: rise 0.55s var(--ease) forwards;
+}
+@keyframes rise {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── Hero (session ring) ───────────────────────────────────────────── */
+
+.hero {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 20px;
+}
+
+.ring {
+  position: relative;
+  flex: 0 0 auto;
+  width: 132px;
+  height: 132px;
+}
+.ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.ring .track {
+  fill: none;
+  stroke: var(--track);
+  stroke-width: 10;
+}
+.ring .prog {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 10;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 7px rgba(193, 95, 60, 0.45));
+  transition: stroke-dashoffset 0.95s var(--ease), stroke 0.5s var(--ease);
+}
+.ring-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.ring-pct {
+  font-size: 34px;
+  font-weight: 650;
+  letter-spacing: -1px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.ring-pct span {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--dim);
+  margin-left: 1px;
+}
+.ring-label {
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-top: 5px;
+  letter-spacing: 0.4px;
+}
+
+.hero-side {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.hero-eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.hero-plan {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 6px;
+  padding: 5px 12px;
+  border-radius: var(--pill);
+  background: linear-gradient(150deg, var(--accent), var(--accent-dim));
+  color: #fff;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.2px;
+  box-shadow: 0 4px 12px -4px rgba(193, 95, 60, 0.55);
+}
+.hero-reset {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.hero-reset b {
+  color: var(--text);
+  font-weight: 600;
+}
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 12px;
+}
+.badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--dim);
+  padding: 3px 8px;
+  border-radius: var(--pill);
+  background: var(--track);
+  border: 1px solid var(--border);
+}
+
+/* ── Linear meters ─────────────────────────────────────────────────── */
+
+.meter + .meter {
+  margin-top: 14px;
+}
+.meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+.meter-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+.meter-sub {
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.meter-val {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.bar {
+  height: 8px;
+  border-radius: var(--pill);
+  background: var(--track);
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  border-radius: var(--pill);
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+  width: 0;
+  transition: width 0.9s var(--ease);
+}
+
+/* ── Model distribution ────────────────────────────────────────────── */
+
+.dist-bar {
+  display: flex;
+  gap: 3px;
+  height: 22px;
+  margin-bottom: 12px;
+}
+.dist-seg {
+  height: 100%;
+  border-radius: 6px;
+  width: 0;
+  transition: width 0.9s var(--ease);
+  min-width: 0;
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+}
+
+/* ── Daily chart ───────────────────────────────────────────────────── */
+
+.chart {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 6px;
+  height: 108px;
+}
+.col {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  justify-content: flex-end;
+}
+.col-count {
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  height: 12px;
+}
+.col-bar {
+  width: 62%;
+  max-width: 26px;
+  border-radius: 6px 6px 3px 3px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-dim));
+  height: 0;
+  transition: height 0.85s var(--ease);
+}
+.col-bar.empty {
+  background: var(--track);
+  height: 3px !important;
+}
+.col-day {
+  font-size: 10.5px;
+  color: var(--muted);
+  height: 12px;
+}
+.col.today .col-day {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── Token tiles ───────────────────────────────────────────────────── */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.tile {
+  background: var(--track);
+  border: 1px solid var(--border);
+  border-radius: var(--r-tile);
+  padding: 13px 10px;
+  text-align: center;
+}
+.tile-val {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+}
+.tile-label {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 3px;
+  letter-spacing: 0.3px;
+}
+
+/* ── Footer ────────────────────────────────────────────────────────── */
+
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 0;
+  margin-top: 2px;
+}
+.foot-status {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.foot-status.stale {
+  color: var(--accent-dim);
+}
+.refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: var(--pill);
+  cursor: pointer;
+  transition: transform 0.14s var(--ease), color 0.16s var(--ease),
+    border-color 0.16s var(--ease);
+}
+.refresh:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+.refresh:active {
+  transform: scale(0.96);
+}
+.refresh svg {
+  stroke: currentColor;
+  stroke-width: 1.6;
+  fill: none;
+  transition: transform 0.5s var(--ease);
+}
+.refresh.spin svg {
+  transform: rotate(360deg);
+}
+
+/* ── States ────────────────────────────────────────────────────────── */
+
+.notice {
+  text-align: center;
+  color: var(--dim);
+  font-size: 12.5px;
+  padding: 40px 20px;
+  line-height: 1.6;
+}
+.notice b {
+  color: var(--text);
+}
+
+/* skeleton */
+.skel {
+  border-radius: var(--r-card);
+  background: linear-gradient(
+    100deg,
+    var(--surface) 30%,
+    var(--surface-2) 50%,
+    var(--surface) 70%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 1.3s linear infinite;
+}
+@keyframes shimmer {
+  to {
+    background-position: -220% 0;
+  }
+}
+.skel-hero {
+  height: 172px;
+}
+.skel-row {
+  height: 118px;
+}
+.skel-tall {
+  height: 150px;
+}
+
+/* ── Reduced motion ────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .rise {
+    opacity: 1;
+    transform: none;
+  }
+}
