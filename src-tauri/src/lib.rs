@@ -13,6 +13,7 @@ use data::{Account, AccountData};
 struct AppState {
     accounts: Vec<Account>,
     active: usize,
+    cache_dir: std::path::PathBuf,
 }
 type Shared = Mutex<AppState>;
 
@@ -57,6 +58,38 @@ fn set_active(app: AppHandle, idx: usize, state: State<Shared>) -> Option<Accoun
     update_tray(&app, &data);
     update_checks(&app, idx);
     Some(data)
+}
+
+#[tauri::command]
+fn rename_account(app: AppHandle, idx: usize, name: String, state: State<Shared>) -> Vec<String> {
+    let (names, is_active) = {
+        let mut st = state.lock().unwrap();
+        if idx >= st.accounts.len() {
+            return st.accounts.iter().map(|a| a.name.clone()).collect();
+        }
+        let trimmed = name.trim().chars().take(24).collect::<String>();
+        if !trimmed.is_empty() {
+            let key = st.accounts[idx].key.clone();
+            let dir = st.cache_dir.clone();
+            st.accounts[idx].name = trimmed.clone();
+            data::save_name(&dir, &key, &trimmed);
+        }
+        let names: Vec<String> = st.accounts.iter().map(|a| a.name.clone()).collect();
+        (names, idx == st.active)
+    };
+    // update the tray menu label for this account
+    if let Some(ui) = app.try_state::<Mutex<Ui>>() {
+        if let Ok(ui) = ui.lock() {
+            if let Some(c) = ui.checks.get(idx) {
+                let _ = c.set_text(&names[idx]);
+            }
+        }
+    }
+    // active account renamed -> refresh tray tooltip (cached, no network)
+    if is_active {
+        refresh_active(&app);
+    }
+    names
 }
 
 // ─── Tray helpers ────────────────────────────────────────────────────
@@ -149,12 +182,13 @@ pub fn run() {
     let accounts = data::discover_accounts(&cache_dir);
 
     tauri::Builder::default()
-        .manage(Mutex::new(AppState { accounts, active: 0 }))
+        .manage(Mutex::new(AppState { accounts, active: 0, cache_dir }))
         .invoke_handler(tauri::generate_handler![
             list_accounts,
             get_active,
             get_account,
-            set_active
+            set_active,
+            rename_account
         ])
         .setup(|app| {
             let handle = app.handle().clone();
