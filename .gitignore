@@ -1,7 +1,9 @@
-__pycache__/
-*.pyc
-*.pyo
-build/
-dist/
-.usage_cache.json
+# Rust / Tauri build output
+/src-tauri/target/
+/src-tauri/gen/
+
+# Runtime usage cache (written to %LOCALAPPDATA%; ignore stray copies)
+.usage_cache*.json
+
+# Claude Code memory
 .remember/

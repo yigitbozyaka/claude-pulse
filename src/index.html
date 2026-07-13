@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Claude Usage</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="titlebar" data-tauri-drag-region>
+      <div class="brand" data-tauri-drag-region>
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">Claude Usage</span>
+      </div>
+      <div class="winctl">
+        <button id="min" class="winbtn" title="Minimize" aria-label="Minimize">
+          <svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" /></svg>
+        </button>
+        <button id="close" class="winbtn winbtn-close" title="Close to tray" aria-label="Close to tray">
+          <svg width="10" height="10" viewBox="0 0 10 10"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5" /><line x1="8.5" y1="1.5" x2="1.5" y2="8.5" /></svg>
+        </button>
+      </div>
+    </header>
+
+    <nav id="tabs" class="tabs" hidden>
+      <div id="tabTrack" class="tab-track">
+        <span id="tabHi" class="tab-hi"></span>
+      </div>
+    </nav>
+
+    <main id="scroll" class="scroll">
+      <div id="view" class="view"></div>
+    </main>
+
+    <script src="main.js"></script>
+  </body>
+</html>

@@ -1,95 +1,79 @@
 <p align="center">
-  <img src="logo.png" width="128" alt="Claude Usage Monitor">
+  <img src="src-tauri/icons/128x128.png" width="112" alt="Claude Pulse">
 </p>
 
 <h1 align="center">Claude Pulse</h1>
 
 <p align="center">
-  Track your Claude Code usage with live gauges, model stats, and rate-limit alerts.
+  A native Windows system-tray app that shows your Claude usage at a glance,
+  across <b>multiple accounts</b>.
   <br>
-  System tray app for Windows — built with Python, CustomTkinter, and PIL.
+  Session &amp; weekly limits, model distribution, daily activity, token stats.
 </p>
 
 <p align="center">
-  <img src="preview.png" width="460" alt="Dashboard Preview">
+  Version 2.0 is a full rewrite in <a href="https://tauri.app">Tauri</a>
+  (Rust backend + web frontend), replacing the original Python/tkinter app.
 </p>
 
 ## Features
 
-- **System tray icon** with battery-style indicator showing current session usage
-- **Live dashboard** with smooth, anti-aliased arc gauges (PIL-rendered at 2x)
-- **Three usage windows** — Session (5h), Weekly All Models, Weekly Sonnet
-- **Progress bars** with reset countdown timers
-- **Model distribution** breakdown (Opus / Sonnet / Haiku / Other)
-- **Daily activity** chart from local JSONL logs
-- **Token stats** — input, output, and total requests for the week
-- **Smart rate-limit handling** — exponential backoff, disk-persisted cache, graceful degradation
-- **OAuth token refresh** — automatically refreshes expired tokens
-- **Auto-refresh** every 60 seconds (configurable)
+- **Multi-account** — auto-detects every Claude config dir (`~/.claude`,
+  `~/.claude-work`, …) and switches between them via dashboard tabs or the tray
+  menu.
+- **Live tray battery icon** — remaining session % rendered as a colour-coded
+  battery (terracotta → amber → red as it depletes).
+- **Dashboard** — session ring gauge, weekly limit meters (all models / Sonnet /
+  Opus), model distribution, a 7-day activity chart, and weekly token totals.
+- **Accurate plan detection** — reads the real subscription (`Pro` / `Max 5x` /
+  `Max 20x` / `Team`) from Claude Code's credentials, per account.
+- **Per-account caching** with atomic writes and rate-limit backoff. Frameless,
+  dark, terracotta UI; closing the window hides it back to the tray.
 
-## How It Works
+## Requirements
 
-The app reads your Claude Code OAuth credentials from `~/.claude/.credentials.json` and calls the Anthropic usage API. Local breakdown data (model distribution, daily activity, token counts) is parsed from the JSONL conversation logs in `~/.claude/projects/`.
+- Windows 10/11 (WebView2 ships with Windows 11).
+- One or more Claude accounts signed in via Claude Code (a `.credentials.json`
+  under `~/.claude*`).
 
-When the API is rate-limited, the app falls back to cached data with a staleness indicator — no crashes, no blank screens.
+## Run
 
-## Quick Start
+Download `ClaudeUsage.exe` from the
+[latest release](https://github.com/yigitbozyaka/claude-pulse/releases/latest)
+and run it. It lives in the system tray — click the icon or **Open Dashboard**
+to open the window.
 
-> **Just want the app?** Download the latest `ClaudeUsageMonitor.exe` from the [Releases page](https://github.com/yigitbozyaka/claude-pulse/releases/latest) — no Python or dependencies needed. Run it and you're done.
+## Build from source
 
-### Prerequisites
-
-- Windows 10/11
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and logged in (OAuth credentials must exist at `~/.claude/.credentials.json`)
-
-### From Source
-
-```bash
-git clone https://github.com/yigitbozyaka/claude-pulse.git
-cd claude-pulse
-pip install -r requirements.txt
-python claude_usage.py
-```
-
-### Build Your Own Binary
+Requires the [Rust toolchain](https://rustup.rs) and the Tauri CLI
+(`cargo install tauri-cli`).
 
 ```bash
-pip install pyinstaller
-pyinstaller ClaudeUsageMonitor.spec
-# Output: dist/ClaudeUsageMonitor.exe
+cd src-tauri
+cargo tauri dev               # run in development
+cargo tauri build --no-bundle # just the exe -> src-tauri/target/release/app.exe
+cargo tauri build             # installer + exe
 ```
 
-## Configuration
+## How it works
 
-Edit `config.json` to customize:
-
-```json
-{
-  "refresh_interval_seconds": 60
-}
-```
-
-## Usage
-
-1. Run the app — it appears as a battery icon in the system tray
-2. **Double-click** the tray icon to open the dashboard
-3. **Right-click** for quick actions: Open Dashboard, Refresh, Quit
-
-The tray icon shows your current session usage percentage and updates automatically.
+The Rust backend discovers accounts, reads each account's OAuth credentials,
+fetches usage from the Anthropic OAuth API, and parses local JSONL session logs
+for the model/token breakdown. The frontend (vanilla HTML/CSS/JS, no bundler)
+renders the dashboard and talks to the backend over Tauri commands; a background
+thread refreshes the active account every 60s and updates the tray icon.
 
 ## Design
 
-Monochrome terracotta palette inspired by Claude's brand:
+Terracotta palette inspired by Claude's brand:
 
-| Element   | Color     |
-|-----------|-----------|
+| Element    | Colour    |
+|------------|-----------|
 | Background | `#141413` |
 | Surface    | `#1c1c1a` |
 | Accent     | `#c15f3c` |
 | Text       | `#f4f3ee` |
 
-All charts and gauges are rendered with PIL at 2x resolution and downsampled with Lanczos filtering for smooth, anti-aliased visuals.
-
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
