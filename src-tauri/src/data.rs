@@ -296,6 +296,7 @@ fn parse_jsonl_entry(line: &str) -> Option<Entry> {
 
 pub struct Account {
     pub name: String,
+    pub key: String,
     credentials_path: PathBuf,
     projects_dir: PathBuf,
     cache_path: PathBuf,
@@ -323,8 +324,10 @@ fn oauth_get(url: &str, token: &str) -> ureq::Request {
 }
 
 impl Account {
-    fn new(name: String, dir: PathBuf, cache_dir: &Path) -> Account {
-        let safe: String = name
+    fn new(name: String, key: String, dir: PathBuf, cache_dir: &Path) -> Account {
+        // cache file is keyed on the stable folder name, not the display name,
+        // so renaming an account doesn't orphan its cache.
+        let safe: String = key
             .chars()
             .map(|c| if c.is_alphanumeric() { c } else { '_' })
             .collect();
@@ -334,6 +337,7 @@ impl Account {
             projects_dir: dir.join("projects"),
             cache_path: cache_dir.join(format!(".usage_cache_{safe}.json")),
             name,
+            key,
             last_usage: None,
             last_usage_time: 0.0,
             backoff_until: 0.0,
@@ -697,21 +701,33 @@ impl Account {
 
 // ─── Discovery ───────────────────────────────────────────────────────
 
-fn account_label(dirname: &str) -> String {
-    let s = dirname.strip_prefix(".claude").unwrap_or(dirname);
-    let s = s.trim_matches(|c| c == '-' || c == '_' || c == '.' || c == ' ');
-    if s.is_empty() {
-        "Default".into()
-    } else {
-        title_case(&s.replace('-', " ").replace('_', " "))
+/// User-set display names, keyed by folder name (e.g. ".claude-work" -> "Work").
+pub fn load_names(cache_dir: &Path) -> HashMap<String, String> {
+    fs::read_to_string(cache_dir.join("names.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Persist a single account's custom name (atomic write).
+pub fn save_name(cache_dir: &Path, key: &str, name: &str) {
+    let mut map = load_names(cache_dir);
+    map.insert(key.to_string(), name.to_string());
+    if let Ok(s) = serde_json::to_string_pretty(&map) {
+        let tmp = cache_dir.join("names.json.tmp");
+        if fs::write(&tmp, s).is_ok() {
+            let _ = fs::rename(&tmp, &cache_dir.join("names.json"));
+        }
     }
 }
 
 pub fn discover_accounts(cache_dir: &Path) -> Vec<Account> {
+    let names = load_names(cache_dir);
     let home = dirs::home_dir().unwrap_or_default();
-    let mut found = Vec::new();
+
+    let mut dirs: Vec<PathBuf> = Vec::new();
     if let Ok(rd) = fs::read_dir(&home) {
-        let mut dirs: Vec<PathBuf> = rd
+        dirs = rd
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.is_dir())
             .filter(|p| {
@@ -722,13 +738,25 @@ pub fn discover_accounts(cache_dir: &Path) -> Vec<Account> {
             .filter(|p| p.join(".credentials.json").exists())
             .collect();
         dirs.sort();
-        for d in dirs {
-            let label = account_label(d.file_name().and_then(|n| n.to_str()).unwrap_or(""));
-            found.push(Account::new(label, d, cache_dir));
-        }
     }
-    if found.is_empty() {
-        found.push(Account::new("Default".into(), home.join(".claude"), cache_dir));
+    if dirs.is_empty() {
+        dirs.push(home.join(".claude"));
     }
-    found
+
+    // Default name is a neutral "Account N" by position; users can rename in-app.
+    dirs.into_iter()
+        .enumerate()
+        .map(|(i, d)| {
+            let key = d
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(".claude")
+                .to_string();
+            let name = names
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| format!("Account {}", i + 1));
+            Account::new(name, key, d, cache_dir)
+        })
+        .collect()
 }

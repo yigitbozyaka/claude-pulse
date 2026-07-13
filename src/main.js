@@ -53,16 +53,49 @@ function buildTabs() {
     return;
   }
   tabsNav.hidden = false;
-  [...tabTrack.querySelectorAll(".tab")].forEach((b) => b.remove());
+  [...tabTrack.querySelectorAll(".tab, .tab-edit")].forEach((b) => b.remove());
   accounts.forEach((name, i) => {
     const b = document.createElement("button");
     b.className = "tab" + (i === active ? " active" : "");
     b.textContent = name;
+    b.title = "Double-click to rename";
     b.onclick = () => selectTab(i);
+    b.ondblclick = () => startRename(i);
     tabTrack.appendChild(b);
   });
   tabHi.style.left = "0px";
   requestAnimationFrame(moveHi);
+}
+
+function startRename(idx) {
+  const btn = tabTrack.querySelectorAll(".tab")[idx];
+  if (!btn) return;
+  const input = document.createElement("input");
+  input.className = "tab-edit";
+  input.value = accounts[idx];
+  input.maxLength = 24;
+  input.spellcheck = false;
+  btn.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const commit = async () => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    if (name && name !== accounts[idx]) {
+      accounts = await invoke("rename_account", { idx, name });
+    }
+    buildTabs();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") input.blur();
+    else if (e.key === "Escape") {
+      done = true;
+      buildTabs();
+    }
+  };
+  input.onblur = commit;
 }
 function moveHi() {
   const el = tabTrack.querySelectorAll(".tab")[active];
